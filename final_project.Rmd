@@ -1,0 +1,39 @@
+---
+title: "project_3"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## API Calls 
+
+https://aqs.epa.gov/aqsweb/documents/data_api.html#daily
+
+```{r air quality}
+library(httr)
+library(dplyr)
+library(jsonlite)
+
+out <- httr::GET("https://aqs.epa.gov/data/api/dailyData/byState?email=klm2244@columbia.edu&key=ecruwren53&param=88101,88502&bdate=20190101&edate=20191231&state=37"
+          #,query = list(
+  #key= "bolewren15",
+  #)
+  )
+# only permit one year of data ugh 
+content(out)[[2]][[1]]$latitude
+content(out)[[2]][[1]]$longitude 
+content(out)[[2]][[1]]$arithmetic_mean
+head(out$request$headers)
+```
+Links to Water Quality data 
+https://coast.noaa.gov/digitalcoast/data/water-quality.html
+https://www.waterqualitydata.us/
+https://www.waterqualitydata.us/portal/#countrycode=US&statecode=US%3A37&startDateLo=01-01-2019&startDateHi=12-31-2019&mimeType=csv
+
+```{r water quality}
+
+water_nc <- read.csv("narrowresult.csv")
+
+```
