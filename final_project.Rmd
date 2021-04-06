@@ -35,5 +35,11 @@ https://www.waterqualitydata.us/portal/#countrycode=US&statecode=US%3A37&startDa
 ```{r water quality}
 
 water_nc <- read.csv("narrowresult.csv")
+water_nc$ResultMeasureValue
+water_nc$OrganizationIdentifier
+
 
 ```
+
+
+
