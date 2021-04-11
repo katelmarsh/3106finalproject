@@ -24,8 +24,36 @@ out <- httr::GET("https://aqs.epa.gov/data/api/dailyData/byState?email=klm2244@c
 # only permit one year of data ugh 
 content(out)[[2]][[1]]$latitude
 content(out)[[2]][[1]]$longitude 
-content(out)[[2]][[1]]$arithmetic_mean
+content(out)[[2]][[1]]$aqi # seems like we want to use this metric 
 head(out$request$headers)
+
+response <- content(out)
+head(response)
+response[[2]][[1]]$aqi
+
+l <- sapply(response$aqi,length)
+l_p <- sapply(job_desc$request_params,length)
+description <- response
+
+aqi_l = c()
+for (i in 1:length(description)){
+  for (j in 1:length(description[[i]])){
+    if (is.na(description[[i]][j])){
+      next
+    }
+    aqi_l <- append(aqi_l,description[[i]][j])
+  }
+}
+
+
+
+unlisted <- lapply(response, unlist)
+
+put_together <- lapply(unlisted, function(x) as.data.frame(as.list(table(x))))
+df <- plyr::rbind.fill(put_together)
+df[is.na(df)] <- 0
+
+
 ```
 Links to Water Quality data 
 https://coast.noaa.gov/digitalcoast/data/water-quality.html
@@ -34,12 +62,27 @@ https://www.waterqualitydata.us/portal/#countrycode=US&statecode=US%3A37&startDa
 
 ```{r water quality}
 
+#stations.csv 
 water_tx <- read.csv("narrowresult.csv")
-water_nc$ResultMeasureValue
-water_nc$OrganizationIdentifier
+water_tx$ResultMeasureValue
+water_tx$OrganizationIdentifier
+water_tx2 <- read.csv("station.csv")
+water_tx2$VerticalMeasure.MeasureValue
+water_tx2$DrainageAreaMeasure.MeasureValue
+water_tx2$ContributingDrainageAreaMeasure.MeasureValue
+water_tx2$HorizontalAccuracyMeasure.MeasureValue
 
 
 ```
 
+```{r water quality testing}
+# using water quality data that we have from texas 
+
+water_tx[1,]
+# temp is ResultMeasureValue
+# apparently I only pulled the temperature data 
 
 
+
+
+```
