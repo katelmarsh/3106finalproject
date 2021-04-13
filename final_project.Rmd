@@ -67,6 +67,7 @@ for (i in seq_along(summary)){
   text <- str_replace_all(text, pattern = '·', replacement = "") #Remove punctuation
   text <- str_replace_all(text, pattern="([8+[0-9]{4}+])", replacement="") # removing all 8000-8999 ASCII errors 
   text <- str_replace_all(text, pattern = 'M&#233;',replacement = "M") # fix broken M 
+  text <- stemDocument(text, language = "english") # stemming words! 
   without_stopwords <- as.list(text)
   combine <- paste0(without_stopwords, collapse = " ")
   combine <- str_replace_all(combine, pattern = 'and', replacement = "") #Remove and (this keeps coming through for some reason)
@@ -105,10 +106,10 @@ csim <- csim %*% t(csim)
 cdist <- as.dist(1 - csim)
 
 #h clust 
-k <- 38
+k <- 26
 hc <- hclust(cdist, "ward.D2")
 plot(hc)
-clustering <- cutree(hc, h=2.5)
+clustering <- cutree(hc, h=3)
 plot(hc, main = "'Complete' Hierarchical Clustering of Movie Review Summaries TF-IDF",
      xlab = "Cosine Similarity as Distance")
 rect.hclust(hc, k, border = "#e56b6f")
@@ -134,7 +135,7 @@ cluster_summary <- data.frame(cluster = unique(clustering),
 formattable(cluster_summary)
 
 # troubleshooting 
-which(grepl("brors", data$summary))
+which(grepl("seri", data$summary))
 
 
 ```
