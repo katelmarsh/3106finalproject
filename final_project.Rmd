@@ -50,9 +50,10 @@ for (i in seq_along(summary)){
     stopwords = qdapDictionaries::OnixTxtRetToolkitSWL1, 
     unlist = FALSE,
     separate = TRUE,
-    strip = FALSE,
+    strip = TRUE,
     unique = FALSE,
     char.keep = NULL,
+    lower.case = TRUE,
     names = FALSE,
     ignore.case = TRUE,
     apostrophe.remove = FALSE
@@ -70,11 +71,10 @@ for (i in seq_along(summary)){
   text <- stemDocument(text, language = "english") # stemming words! 
   without_stopwords <- as.list(text)
   combine <- paste0(without_stopwords, collapse = " ")
-  combine <- str_replace_all(combine, pattern = 'and', replacement = "") #Remove and (this keeps coming through for some reason)
-  #combine <- str_replace_all(combine, pattern = 'the', replacement = "") #Remove and (this keeps coming through for some reason)
-  summary_cleaned <- append(summary_cleaned, removePunctuation(combine))
+  summary_cleaned <- append(summary_cleaned, combine) 
 }
 s_cleaned <- quanteda::dfm(summary_cleaned, verbose = FALSE)
+
 dim(s_cleaned)
 target_freq <- as.numeric(s_cleaned)
 freqs_mat <- as.matrix(s_cleaned)
@@ -106,10 +106,10 @@ csim <- csim %*% t(csim)
 cdist <- as.dist(1 - csim)
 
 #h clust 
-k <- 26
+k <- 36
 hc <- hclust(cdist, "ward.D2")
 plot(hc)
-clustering <- cutree(hc, h=3)
+clustering <- cutree(hc, h=2.5)
 plot(hc, main = "'Complete' Hierarchical Clustering of Movie Review Summaries TF-IDF",
      xlab = "Cosine Similarity as Distance")
 rect.hclust(hc, k, border = "#e56b6f")
@@ -135,9 +135,26 @@ cluster_summary <- data.frame(cluster = unique(clustering),
 formattable(cluster_summary)
 
 # troubleshooting 
-which(grepl("seri", data$summary))
+#which(grepl("and", data$summary))
 
 
 ```
+
+```{r visualization}
+library(syuzhet)
+for(i in 1:length(colnames(data))){
+  text <- get_tokens(data$summary[i])
+  syuzhet_vector <- get_sentiment(text, method="syuzhet")
+  data$sent_mean[i] <- mean(syuzhet_vector)
+  data$sent_sd[i] <- sd(syuzhet_vector)
+  data$sent_sum[i] <- sum(syuzhet_vector)
+}
+head(data)
+
+data[which(data$sent_sum ==max(data$sent_sum)),] # most positive 
+data[which(data$sent_sum ==min(data$sent_sum)),] # most negative 
+
+```
+
 
 
