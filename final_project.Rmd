@@ -177,7 +177,24 @@ dim(merged)
 final_merge <- merge(merged, data, by.x="primaryTitle", by.y="title", all.y=TRUE)
 write.csv(final_merge, "nyt_and_imdb_data.csv")
 
+mean(which(final_merge$averageRating >= 7.1) %in% which(final_merge$critics_pick == 1))
+
+which(final_merge$averageRating >= 7.1)
+
+genres <- list()
+for(i in seq_along(rownames(final_merge))){
+  genres[5] <- as.list(strsplit(as.character(final_merge$genres[5]),split=",")[[1]])
+} 
+#table(genres)
+
 ```
+
+Interesting stats: 
+- 21.85% of movies in this time period are "critics picks" 
+- the average movie rating is a 6.37
+- the top 3rd quartile is 7.1 movie rating 
+- only .3416 in the top quartile of IMDB ratings also have a critics pick 
+- at the same time, there is a significant correlation between the averageRating and the critics_pick 
 
 ```{r}
 final_merge <- fread("nyt_and_imdb_data.csv")
@@ -197,6 +214,8 @@ summary(ols)
 ols <- lm(averageRating ~ opening_date, data=final_merge)
 summary(ols)
 
+ols <- lm(critics_pick ~ averageRating, data=final_merge)
+summary(ols)
 
 hist(final_merge$numVotes)
 hist(final_merge$runtimeMinutes)
