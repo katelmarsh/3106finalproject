@@ -142,14 +142,17 @@ formattable(cluster_summary)
 
 ```{r visualization}
 library(syuzhet)
-for(i in 1:length(colnames(data))){
+for(i in 1:length(rownames(data))){
   text <- get_tokens(data$summary[i])
   syuzhet_vector <- get_sentiment(text, method="syuzhet")
   data$sent_mean[i] <- mean(syuzhet_vector)
   data$sent_sd[i] <- sd(syuzhet_vector)
   data$sent_sum[i] <- sum(syuzhet_vector)
 }
-head(data)
+tail(data)
+
+# one data issue is that there are 267 summaries that do not have any positive or negative words in the dataset and therefore have a mean, sd, and sum of 0 
+
 
 data[which(data$sent_sum ==max(data$sent_sum)),] # most positive 
 data[which(data$sent_sum ==min(data$sent_sum)),] # most negative 
@@ -157,4 +160,79 @@ data[which(data$sent_sum ==min(data$sent_sum)),] # most negative
 ```
 
 
+```{r}
+ratings <- read.csv("~/Downloads/title.ratings.tsv", sep = "\t")
+require(data.table)
+basics <- fread("~/Downloads/title.basics.tsv", sep = "\t")
+
+merged <- merge(ratings, basics, by="tconst")
+
+merged <- merged[which(merged$startYear > 2009),] 
+merged <- merged[which(merged$startYear < 2021),] 
+merged <- merged[which(merged$titleType == 'movie' | merged$titleType == 'tvmovie'),] 
+write.csv(merged, "imdb_data.csv")
+dim(merged)
+#92518 rows lol 
+
+final_merge <- merge(merged, data, by.x="primaryTitle", by.y="title", all.y=TRUE)
+write.csv(final_merge, "nyt_and_imdb_data.csv")
+
+```
+
+```{r}
+final_merge <- fread("nyt_and_imdb_data.csv")
+
+final_merge$runtimeMinutes <- as.numeric(final_merge$runtimeMinutes)
+
+opening_dates <- rep(NA, length(rownames(final_merge)))
+for(i in seq_along(rownames(final_merge))){
+  opening_dates[i] <- strftime(strsplit(as.character(final_merge$opening_date[i]),split="T")[[1]][1], format='%Y-%m-%d')
+} 
+final_merge$opening_date <- as.Date(unlist(opening_dates))
+hist(final_merge$opening_date, "days") # super interesting! 
+
+ols <- glm(critics_pick ~ opening_date, data=final_merge, family="binomial")
+summary(ols)
+
+ols <- lm(averageRating ~ opening_date, data=final_merge)
+summary(ols)
+
+
+hist(final_merge$numVotes)
+hist(final_merge$runtimeMinutes)
+
+ols <- glm(critics_pick ~ runtimeMinutes + averageRating + numVotes, data=final_merge, family="binomial")
+summary(ols)
+# critics pick and average rating have a significant relatinship!! 
+# average rating and num votes have significant relationships 
+
+ols <- lm(averageRating ~ runtimeMinutes + numVotes + critics_pick + sent_mean + sent_sd + sent_sum, data=final_merge)
+summary(ols)
+# runtime, numVotes, critics pick, and sent sd have a significant relationship 
+
+plot(final_merge$sent_sd, final_merge$averageRating) 
+hist(final_merge$sent_sum)
+
+```
+```{r}
+# should we do PCA? 
+
+
+
+
+
+
+```
+
+
+```{r}
+library(genderdata)
+for (i in 1:length(nyt_reviews$author)) {
+  gender <- gender(nyt_reviews$first_name)$gender
+  nyt_reviews$gender[i] <- gender
+  i <- i + 1
+}
+
+
+```
 
