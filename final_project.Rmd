@@ -145,25 +145,6 @@ formattable(cluster_summary)
 
 ```
 
-```{r visualization}
-library(syuzhet)
-for(i in 1:length(rownames(data))){
-  text <- get_tokens(data$summary[i])
-  syuzhet_vector <- get_sentiment(text, method="syuzhet")
-  data$sent_mean[i] <- mean(syuzhet_vector)
-  data$sent_sd[i] <- sd(syuzhet_vector)
-  data$sent_sum[i] <- sum(syuzhet_vector)
-}
-tail(data)
-
-# one data issue is that there are 267 summaries that do not have any positive or negative words in the dataset and therefore have a mean, sd, and sum of 0 
-
-
-data[which(data$sent_sum ==max(data$sent_sum)),] # most positive 
-data[which(data$sent_sum ==min(data$sent_sum)),] # most negative 
-
-```
-
 
 ```{r}
 ratings <- read.csv("~/Downloads/title.ratings.tsv", sep = "\t")
@@ -179,7 +160,16 @@ write.csv(merged, "imdb_data.csv")
 dim(merged)
 #16557 rows lol 
 
-final_merge <- merge(merged, data, by.x="primaryTitle", by.y="title", all.y=TRUE)
+final_merge <- merge(merged, data, by.x="primaryTitle", by.y="title")
+
+# data cleaning, corre
+opening_dates <- rep(NA, length(rownames(final_merge)))
+for(i in seq_along(rownames(final_merge))){
+  opening_dates[i] <- strftime(strsplit(as.character(final_merge$opening_date[i]),split="T")[[1]][1], format='%Y-%m-%d')
+} 
+final_merge$opening_date <- as.Date(unlist(opening_dates))
+final_merge <- final_merge[!which(final_merge$opening_date <= 2019-03-15),] 
+
 write.csv(final_merge, "nyt_and_imdb_data.csv")
 
 mean(which(final_merge$averageRating > quantile(final_merge$averageRating,prob=1-21.85/100, na.rm = TRUE))
@@ -202,27 +192,36 @@ Interesting stats for the project pre-covid analysis:
 - only .3536 in the top quartile of IMDB ratings also have a critics pick 
 - at the same time, there is a significant correlation between the averageRating and the critics_pick 
 
+
+```{r dates}
+range(final_merge$opening_date) 
+
+# making pre and post covid variable 
+for(i in 1:length(rownames(final_merge))){
+  if (final_merge$opening_date[i] >= "2020-03-15"){
+    final_merge$covid[i] <- 1
+  }
+  else final_merge$covid[i] <- 0 
+}
+
+```
+
+
 ```{r}
-final_merge <- fread("nyt_and_imdb_data.csv")
+final_merge <- fread("~/Downloads/nyt_and_imdb_data.csv")
 
 final_merge$runtimeMinutes <- as.numeric(final_merge$runtimeMinutes)
 
-opening_dates <- rep(NA, length(rownames(final_merge)))
-for(i in seq_along(rownames(final_merge))){
-  opening_dates[i] <- strftime(strsplit(as.character(final_merge$opening_date[i]),split="T")[[1]][1], format='%Y-%m-%d')
-} 
-final_merge$opening_date <- as.Date(unlist(opening_dates))
 hist(final_merge$opening_date, "days") # super interesting! 
 hist(final_merge$opening_date, "months") # super interesting! 
 
 ols <- glm(critics_pick ~ opening_date, data=final_merge, family="binomial")
 summary(ols)
+# high p value 
 
 ols <- lm(averageRating ~ opening_date, data=final_merge)
 summary(ols)
-
-ols <- lm(critics_pick ~ averageRating, data=final_merge)
-summary(ols)
+# high p value 
 
 hist(final_merge$numVotes)
 hist(final_merge$runtimeMinutes)
@@ -230,11 +229,15 @@ hist(final_merge$runtimeMinutes)
 ols <- glm(critics_pick ~ runtimeMinutes + averageRating + numVotes, data=final_merge, family="binomial")
 summary(ols)
 # critics pick and average rating have a significant relatinship!! 
-# average rating and num votes have significant relationships 
 
-ols <- lm(averageRating ~ runtimeMinutes + numVotes + critics_pick + sent_mean + sent_sd + sent_sum, data=final_merge)
+ols <- lm(averageRating ~ runtimeMinutes + numVotes + sent_sd + sent_sum, data=final_merge)
 summary(ols)
-# runtime, numVotes, critics pick, and sent sd have a significant relationship 
+# runtime, numVotes, critics pick, runtime, and sent sd have a significant relationship 
+
+ols <- glm(covid ~ runtimeMinutes + averageRating + numVotes + critics_pick + sent_mean + sent_sd + sent_sum, data=final_merge, family="binomial")
+summary(ols)
+# highly correlated with the number of votes, sent_mean, and sent_sum 
+plot(ols)
 
 plot(final_merge$sent_sd, final_merge$averageRating) 
 hist(final_merge$sent_sum)
@@ -252,6 +255,24 @@ cor(final_merge$averageRating, final_merge$numVotes, na.rm=TRUE)
 
 ```
 
+```{r visualization}
+library(syuzhet)
+for(i in 1:length(rownames(final_merge))){
+  text <- get_tokens(final_merge$summary[i])
+  syuzhet_vector <- get_sentiment(text, method="syuzhet")
+  final_merge$sent_mean[i] <- mean(syuzhet_vector)
+  final_merge$sent_sd[i] <- sd(syuzhet_vector)
+  final_merge$sent_sum[i] <- sum(syuzhet_vector)
+}
+tail(final_merge)
+
+# one data issue is that there are 267 summaries that do not have any positive or negative words in the dataset and therefore have a mean, sd, and sum of 0 
+
+
+final_merge[which(final_merge$sent_sum ==max(final_merge$sent_sum)),] # most positive 
+final_merge[which(final_merge$sent_sum ==min(final_merge$sent_sum)),] # most negative 
+
+```
 
 ```{r}
 library(genderdata)
