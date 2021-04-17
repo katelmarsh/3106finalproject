@@ -11,12 +11,13 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ```{r} 
 library(httr)
+library(jsonlite)
 
 k <- 5000
 data <- list(rep(NA,k))
 for(i in 0:k){
   j <- i*20
-  get_url <- paste0("https://api.nytimes.com/svc/movies/v2/reviews/search.json?opening-date=2019-03-015:2021-013-15&api-key=wgJfZeGJBfKXqHXLC7MKYIhusdKGy2y5&offset=",j)
+  get_url <- paste0("https://api.nytimes.com/svc/movies/v2/reviews/search.json?opening-date=2019-03-15:2021-03-15&api-key=wgJfZeGJBfKXqHXLC7MKYIhusdKGy2y5&offset=",j)
   nyt_data <- GET(get_url)
   nyt_data <- content(nyt_data)
   if(nyt_data[[3]] == FALSE){
@@ -27,11 +28,13 @@ for(i in 0:k){
   }
   Sys.sleep(10)
 }
+
 nyt_data$status_code
 
-write_json(data, "nyt_movie_reviews_covid.json")
-data <- read.csv("nyt_movies_clean.csv")
+dim(data)
 
+write_json(data, "nyt_movie_reviews_covid.json")
+data <- read.csv("nyt_reviews_covid.csv")
 
 
 ```
@@ -169,12 +172,12 @@ basics <- fread("~/Downloads/title.basics.tsv", sep = "\t")
 
 merged <- merge(ratings, basics, by="tconst")
 
-merged <- merged[which(merged$startYear > 2009),] 
-merged <- merged[which(merged$startYear < 2021),] 
+merged <- merged[which(merged$startYear >= 2019),] 
+merged <- merged[which(merged$startYear <= 2021),] 
 merged <- merged[which(merged$titleType == 'movie' | merged$titleType == 'tvmovie'),] 
 write.csv(merged, "imdb_data.csv")
 dim(merged)
-#92518 rows lol 
+#16557 rows lol 
 
 final_merge <- merge(merged, data, by.x="primaryTitle", by.y="title", all.y=TRUE)
 write.csv(final_merge, "nyt_and_imdb_data.csv")
@@ -192,11 +195,11 @@ for(i in seq_along(rownames(final_merge))){
 
 ```
 
-Interesting stats: 
+Interesting stats for the project pre-covid analysis: 
 - 21.85% of movies in this time period are "critics picks" 
 - the average movie rating is a 6.37
 - the top 3rd quartile is 7.1 movie rating 
-- only .3416 in the top quartile of IMDB ratings also have a critics pick 
+- only .3536 in the top quartile of IMDB ratings also have a critics pick 
 - at the same time, there is a significant correlation between the averageRating and the critics_pick 
 
 ```{r}
