@@ -206,7 +206,6 @@ for(i in 1:length(rownames(final_merge))){
 
 ```
 
-
 ```{r}
 final_merge <- fread("~/Downloads/nyt_and_imdb_data.csv")
 
@@ -214,6 +213,8 @@ final_merge$runtimeMinutes <- as.numeric(final_merge$runtimeMinutes)
 
 hist(final_merge$opening_date, "days") # super interesting! 
 hist(final_merge$opening_date, "months") # super interesting! 
+
+# playing with different models 
 
 ols <- glm(critics_pick ~ opening_date, data=final_merge, family="binomial")
 summary(ols)
@@ -234,28 +235,13 @@ ols <- lm(averageRating ~ runtimeMinutes + numVotes + sent_sd + sent_sum, data=f
 summary(ols)
 # runtime, numVotes, critics pick, runtime, and sent sd have a significant relationship 
 
-ols <- glm(covid ~ runtimeMinutes + averageRating + numVotes + critics_pick + sent_mean + sent_sd + sent_sum, data=final_merge, family="binomial")
-summary(ols)
-# highly correlated with the number of votes, sent_mean, and sent_sum 
-plot(ols)
-
 plot(final_merge$sent_sd, final_merge$averageRating) 
 hist(final_merge$sent_sum)
 
 cor(final_merge$averageRating, final_merge$numVotes, na.rm=TRUE)
 
 ```
-```{r}
-# should we do PCA? 
-
-
-
-
-
-
-```
-
-```{r visualization}
+```{r sentiment}
 library(syuzhet)
 for(i in 1:length(rownames(final_merge))){
   text <- get_tokens(final_merge$summary[i])
@@ -273,6 +259,152 @@ final_merge[which(final_merge$sent_sum ==max(final_merge$sent_sum)),] # most pos
 final_merge[which(final_merge$sent_sum ==min(final_merge$sent_sum)),] # most negative 
 
 ```
+
+
+```{r}
+library(caret)
+library(Matrix)
+library(glmnet)
+# Exclude non-numeric
+final_merge <- as.data.frame(final_merge)
+wanted_cols <- c("averageRating", "runtimeMinutes", "covid", "numVotes", "critics_pick", "sent_mean", "sent_sd", "sent_sum")
+
+reg_data <- final_merge[,wanted_cols]
+reg_data[is.na(reg_data)] <- 0
+
+# Defining the MSE
+mse <-function(actual, pred){
+  return(mean((actual - pred)^2))
+}
+
+# Creating 10-folds
+set.seed(123)
+test_folds <- createFolds(reg_data$covid, k = 10)
+
+#ols <- glm(covid ~ runtimeMinutes + averageRating + numVotes + critics_pick + sent_mean + sent_sd + sent_sum, data=final_merge, family="binomial")
+#summary(ols)
+#plot(ols)
+
+# OLS
+ols <-function(test, train){
+  fit <- glm(train$covid ~ ., family="binomial", data=train)
+  pred <- predict(fit, test)
+  return(mse(test$covid, pred))
+}
+
+stepwise <-function(test, train){
+  fit = glm(train$covid ~ ., family="binomial", data=train)
+  fit_summary = summary(fit)$coefficients
+  okay_features = rownames(fit_summary)[fit_summary[, 4] < 0.05]
+  init_formula = paste('train$covid ~', paste(okay_features[-1], collapse ='+'))
+  init_mod = glm(init_formula, family="binomial", data=train)
+  step_mod <- step(init_mod, "~.", trace = 0)
+  pred <- predict(step_mod, test)
+  return(mse(test$covid, pred))
+}
+
+lasso <-function(test, train){
+  x_train <- Matrix(as.matrix(train[ , -which(colnames(train) == "covid")]), sparse = TRUE)
+  y_train <- train$covid
+  x_test <- Matrix(as.matrix(test[ , -which(colnames(test) == "covid")]), sparse = TRUE)
+  y_test <- test$covid
+  lasso_cv <- cv.glmnet(x_train, y_train, alpha = 1, nfolds = 5, family="binomial", intercept = TRUE)
+  lasso_mod <- glmnet(x_train, y_train, alpha = 1, family="binomial", lambda = lasso_cv$lambda.min)
+  pred <- predict(lasso_mod, x_test)
+  return(mse(y_test, pred))
+}
+
+ridge <-function(test, train){
+  x_train <- Matrix(as.matrix(train[ , -which(colnames(train) == "covid")]), sparse = TRUE)
+  y_train <- train$covid
+  x_test <- Matrix(as.matrix(test[ , -which(colnames(test) == "covid")]), sparse = TRUE)
+  y_test <- test$covid
+  ridge_cv <- cv.glmnet(x_train, y_train, alpha = 1, nfolds = 5, family="binomial", intercept = TRUE)
+  ridge_mod <- glmnet(x_train, y_train, alpha = 0, family="binomial", lambda = ridge_cv$lambda.min)
+  pred <- predict(ridge_mod, x_test)
+  return(mse(y_test, pred))
+}
+
+mod <- data.frame(matrix(nrow = 5, ncol = 5))
+colnames(mod) <- c("ols", "stepwise", "lasso", "ridge", "min")
+
+for(i in 1:10){
+  test <- reg_data[test_folds[[i]], ]
+  train <- reg_data[-test_folds[[i]], ]
+  mod[i, "ols"] <- ols(test, train)
+  mod[i, "stepwise"] <- stepwise(test, train)
+  mod[i, "lasso"] <- lasso(test, train)
+  mod[i, "ridge"] <- ridge(test, train)
+}
+for(i in 1:10){
+  mod[i, "min"] <- names(which.min(mod[i, ]))
+}
+print(mod)
+
+# lasso performs the best almost all the time, so let's use lasso! 
+
+```
+
+
+```{r}
+# using lasso! 
+#lasso <-function(test, train){
+#  x_train <- Matrix(as.matrix(train[ , -which(colnames(train) == "covid")]), sparse = TRUE)
+#  y_train <- train$covid
+#  x_test <- Matrix(as.matrix(test[ , -which(colnames(test) == "covid")]), sparse = TRUE)
+#  y_test <- test$covid
+#  lasso_cv <- cv.glmnet(x_train, y_train, alpha = 1, nfolds = 5, family="binomial", intercept = TRUE)
+#  lasso_mod <- glmnet(x_train, y_train, alpha = 1, family="binomial", lambda = lasso_cv$lambda.min)
+#  pred <- predict(lasso_mod, x_test)
+#  return(summary(lasso_cv))
+#}
+
+
+all_x <- Matrix(as.matrix(reg_data[ , -which(colnames(reg_data) == "covid")]), sparse = TRUE)
+all_y <- reg_data$covid
+
+#without norm
+lasso_cv <- cv.glmnet(all_x, all_y, alpha = 1, nfolds = 5, intercept = TRUE)
+lasso_mod <- glmnet(all_x, all_y, alpha = 1, lambda = lasso_cv$lambda.min)
+not_norm_coefficients <- as.matrix(lasso_mod$beta)
+plot(not_norm_coefficients, main = "Coefficients of Lasso", ylab = "Beta")
+
+
+#with norm 
+all_x_scaled <- scale(Matrix(as.matrix(reg_data[ , -which(colnames(reg_data) == "covid")])))
+lasso_cv <- cv.glmnet(all_x_scaled, all_y, alpha = 1, nfolds = 5, intercept = TRUE)
+lasso_mod <- glmnet(all_x_scaled, all_y, alpha = 1, lambda = lasso_cv$lambda.min)
+yes_norm_coefficients <- as.matrix(lasso_mod$beta)
+plot(yes_norm_coefficients, main = "Coefficients of Lasso", ylab = "Beta")
+
+#for(i in 1:10){
+#  test <- reg_data[test_folds[[i]], ]
+#  train <- reg_data[-test_folds[[i]], ]
+#  x_train <- Matrix(as.matrix(train[ , -which(colnames(train) == "covid")]), sparse = TRUE)
+#  y_train <- train$covid
+#  x_test <- Matrix(as.matrix(test[ , -which(colnames(test) == "covid")]), sparse = TRUE)
+#  y_test <- test$covid
+#  lasso_cv <- cv.glmnet(x_train, y_train, alpha = 1, nfolds = 5, family="binomial", intercept = TRUE)
+#  lasso_mod <- glmnet(x_train, y_train, alpha = 1, family="binomial", lambda = lasso_cv$lambda.min)
+#  pred <- predict(lasso_mod, x_test)
+#  norm_coefficients <- as.matrix(lasso_mod$beta)
+#}
+
+# average rating has the highest association with the "covid" variable, 
+
+
+top_tokens_not_norm <- rownames(not_norm_coefficients)[order(abs(not_norm_coefficients), decreasing = TRUE)[1:5]]
+top_tokens_norm <- rownames(yes_norm_coefficients)[order(abs(yes_norm_coefficients), decreasing = TRUE)[1:5]]
+sum(top_tokens_norm %in% top_tokens_not_norm)
+top_tokens_norm[which(top_tokens_norm %in% top_tokens_not_norm)] 
+
+
+```
+averageRating, runtimeMinutes, and sent_mean are the columns that overlap in the top 5 for normalized and not normalized
+
+this means that averageRating, runtimeMinutes, and sent_mean have the strongest associations with the covid variable. This means that they had the strongest nonzero coefficients. 
+
+
 
 ```{r}
 library(genderdata)
