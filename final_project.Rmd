@@ -16,7 +16,7 @@ k <- 5000
 data <- list(rep(NA,k))
 for(i in 0:k){
   j <- i*20
-  get_url <- paste0("https://api.nytimes.com/svc/movies/v2/reviews/search.json?opening-date=2010-01-01:2020-01-01&api-key=wgJfZeGJBfKXqHXLC7MKYIhusdKGy2y5&offset=",j)
+  get_url <- paste0("https://api.nytimes.com/svc/movies/v2/reviews/search.json?opening-date=2019-03-015:2021-013-15&api-key=wgJfZeGJBfKXqHXLC7MKYIhusdKGy2y5&offset=",j)
   nyt_data <- GET(get_url)
   nyt_data <- content(nyt_data)
   if(nyt_data[[3]] == FALSE){
@@ -29,8 +29,10 @@ for(i in 0:k){
 }
 nyt_data$status_code
 
-write_json(data, "nyt_movie_reviews.json")
+write_json(data, "nyt_movie_reviews_covid.json")
 data <- read.csv("nyt_movies_clean.csv")
+
+
 
 ```
 
@@ -177,15 +179,16 @@ dim(merged)
 final_merge <- merge(merged, data, by.x="primaryTitle", by.y="title", all.y=TRUE)
 write.csv(final_merge, "nyt_and_imdb_data.csv")
 
-mean(which(final_merge$averageRating >= 7.1) %in% which(final_merge$critics_pick == 1))
-
-which(final_merge$averageRating >= 7.1)
+mean(which(final_merge$averageRating > quantile(final_merge$averageRating,prob=1-21.85/100, na.rm = TRUE))
+     %in% which(final_merge$critics_pick == 1))
 
 genres <- list()
 for(i in seq_along(rownames(final_merge))){
   genres[5] <- as.list(strsplit(as.character(final_merge$genres[5]),split=",")[[1]])
 } 
 #table(genres)
+
+# merge by social secruity data by first name 
 
 ```
 
@@ -207,6 +210,7 @@ for(i in seq_along(rownames(final_merge))){
 } 
 final_merge$opening_date <- as.Date(unlist(opening_dates))
 hist(final_merge$opening_date, "days") # super interesting! 
+hist(final_merge$opening_date, "months") # super interesting! 
 
 ols <- glm(critics_pick ~ opening_date, data=final_merge, family="binomial")
 summary(ols)
@@ -231,6 +235,8 @@ summary(ols)
 
 plot(final_merge$sent_sd, final_merge$averageRating) 
 hist(final_merge$sent_sum)
+
+cor(final_merge$averageRating, final_merge$numVotes, na.rm=TRUE)
 
 ```
 ```{r}
