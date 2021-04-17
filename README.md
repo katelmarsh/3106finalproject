@@ -4,4 +4,4 @@ Vivian Liu and Kate Marsh's final project for STAT3106 Applied Data Mining at Co
 
 We took [IMDB](https://www.imdb.com/interfaces/) and [NYT Movie Reviews](https://developer.nytimes.com/docs/movie-reviews-api/1/overview) data  and compared sentiments for different genres before and after COVID-19 Lockdown started in March 2020.
 
-The final_project.Rmd contains the code for this project in full, with various versions of the data (json, csv, different merges) available as well.
+The final_project.Rmd contains the code for this project in full. Data will not be available in this repository but can be accessed using the links above. 
