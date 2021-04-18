@@ -1,0 +1,802 @@
+---
+title: "project_3"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## API Calls 
+
+```{r} 
+library(httr)
+library(jsonlite)
+k <- 5000
+data <- list(rep(NA,k))
+for(i in 0:k){
+  j <- i*20
+  get_url <- paste0("https://api.nytimes.com/svc/movies/v2/reviews/search.json?opening-date=2019-03-15:2021-03-15&api-key=wgJfZeGJBfKXqHXLC7MKYIhusdKGy2y5&offset=",j)
+  nyt_data <- GET(get_url)
+  nyt_data <- content(nyt_data)
+  if(nyt_data[[3]] == FALSE){
+    break
+  }
+  for(n in 1:length(nyt_data)){
+    data[n+j] <- nyt_data[n]
+  }
+  Sys.sleep(10)
+}
+nyt_data$status_code
+dim(data)
+write_json(data, "nyt_movie_reviews_covid.json")
+data <- read.csv("nyt_reviews_covid.csv")
+```
+
+```{r}
+library(quanteda)
+library(qdap)
+library(stringr)
+library(knitr)
+library(tm)
+summary <- data$summary 
+summary_cleaned <- c()
+for (i in seq_along(summary)){
+    without_stopwords <- rm_stopwords(
+    summary[i],
+    stopwords = qdapDictionaries::OnixTxtRetToolkitSWL1, 
+    unlist = FALSE,
+    separate = TRUE,
+    strip = TRUE,
+    unique = FALSE,
+    char.keep = NULL,
+    lower.case = TRUE,
+    names = FALSE,
+    ignore.case = TRUE,
+    apostrophe.remove = FALSE
+  )
+  text <- unlist(without_stopwords)
+  text <- str_replace_all(text, pattern = '\n', replacement = "") # Remove \n
+  text <- str_replace_all(text, pattern = '\u0092', replacement = "'") #Replace with quote
+  text <- str_replace_all(text, pattern = '\u0091', replacement = "'") #Replace with quote
+  text <- str_replace_all(text, pattern = '[:punct:]', replacement = "") #Remove punctuation
+  text <- str_replace_all(text, pattern = '$', replacement = "") #Remove punctuation
+  text <- str_replace_all(text, pattern = '-', replacement = "") #Remove punctuation
+  text <- str_replace_all(text, pattern = '·', replacement = "") #Remove punctuation
+  text <- str_replace_all(text, pattern="([8+[0-9]{4}+])", replacement="") # removing all 8000-8999 ASCII errors 
+  text <- str_replace_all(text, pattern = 'M&#233;',replacement = "M") # fix broken M 
+  text <- stemDocument(text, language = "english") # stemming words! 
+  without_stopwords <- as.list(text)
+  combine <- paste0(without_stopwords, collapse = " ")
+  summary_cleaned <- append(summary_cleaned, combine) 
+}
+s_cleaned <- quanteda::dfm(summary_cleaned, verbose = FALSE)
+dim(s_cleaned)
+target_freq <- as.numeric(s_cleaned)
+freqs_mat <- as.matrix(s_cleaned)
+doc_freq <- apply(freqs_mat,2,function(x) mean(x>0))
+idf <- 1/doc_freq
+idf_mat <- rep(idf,nrow(freqs_mat), byrow = TRUE, nrow = nrow(freqs_mat))
+tf_idf <- freqs_mat * idf_mat
+```
+
+```{r}
+# get the top k tokens with the highest tf-idf value
+k <- 15
+i <- 1
+keyword_lists <- data.frame(matrix(NA, nrow = nrow(tf_idf), ncol = k))
+for (i in 1:nrow(tf_idf)){
+  keyword_lists[i,] <- names(tf_idf[i,][order(tf_idf[i,],decreasing = TRUE)[1:k]])
+}
+head(keyword_lists)
+```
+
+```{r}
+# TF-IDF and cosine similarity
+# document clustering! with https://cran.r-project.org/web/packages/textmineR/vignettes/b_document_clustering.html
+# changing cosine similarity to a distance 
+csim <- tf_idf / sqrt(rowSums(tf_idf * tf_idf))
+csim <- csim %*% t(csim)
+cdist <- as.dist(1 - csim)
+#h clust 
+k <- 36
+hc <- hclust(cdist, "ward.D2")
+plot(hc)
+clustering <- cutree(hc, h=2.5)
+plot(hc, main = "'Complete' Hierarchical Clustering of Movie Review Summaries TF-IDF",
+     xlab = "Cosine Similarity as Distance")
+rect.hclust(hc, k, border = "#e56b6f")
+p_words <- colSums(freqs_mat) / sum(freqs_mat)
+cluster_words <- lapply(unique(clustering), function(x){
+  rows <- freqs_mat[clustering == x,]
+  # for memory's sake, drop all words that don't appear in the cluster
+  rows <- rows[ , colSums(rows) > 0 ]
+  colSums(rows) / sum(rows) - p_words[ colnames(rows) ]
+})
+```
+
+```{r visualization}
+library(formattable)
+cluster_summary <- data.frame(cluster = unique(clustering),
+                              size = as.numeric(table(clustering)),
+                              top_words = sapply(cluster_words, function(d){
+                                paste(
+                                  names(d)[ order(d, decreasing = TRUE) ][ 1:5 ], 
+                                  collapse = ", ")
+                              }),
+                              stringsAsFactors = FALSE)
+formattable(cluster_summary)
+# troubleshooting 
+#which(grepl("and", data$summary))
+```
+
+
+```{r}
+ library(data.table)
+ratings <- read.csv("~/Downloads/title.ratings.tsv", sep = "\t")
+require(data.table)
+basics <- fread("~/Downloads/title.basics.tsv", sep = "\t")
+merged <- merge(ratings, basics, by="tconst")
+merged <- merged[which(merged$startYear >= 2019),] 
+merged <- merged[which(merged$startYear <= 2021),] 
+merged <- merged[which(merged$titleType == 'movie' | merged$titleType == 'tvmovie'),] 
+write.csv(merged, "imdb_data.csv")
+dim(merged)
+#16557 rows lol 
+final_merge <- merge(merged, data, by.x="primaryTitle", by.y="title")
+# data cleaning, corre
+opening_dates <- rep(NA, length(rownames(final_merge)))
+for(i in seq_along(rownames(final_merge))){
+  opening_dates[i] <- strftime(strsplit(as.character(final_merge$opening_date[i]),split="T")[[1]][1], format='%Y-%m-%d')
+} 
+final_merge$opening_date <- as.Date(unlist(opening_dates))
+final_merge <- final_merge[!which(final_merge$opening_date <= 2019-03-15),] 
+write.csv(final_merge, "nyt_and_imdb_data.csv")
+mean(which(final_merge$averageRating > quantile(final_merge$averageRating,prob=1-21.85/100, na.rm = TRUE))
+     %in% which(final_merge$critics_pick == 1))
+genres <- list()
+for(i in seq_along(rownames(final_merge))){
+  genres[5] <- as.list(strsplit(as.character(final_merge$genres[5]),split=",")[[1]])
+} 
+#table(genres)
+# merge by social secruity data by first name 
+```
+
+Interesting stats for the project pre-covid analysis: 
+- 21.85% of movies in this time period are "critics picks" 
+- the average movie rating is a 6.37
+- the top 3rd quartile is 7.1 movie rating 
+- only .3536 in the top quartile of IMDB ratings also have a critics pick 
+- at the same time, there is a significant correlation between the averageRating and the critics_pick 
+
+
+```{r dates}
+range(final_merge$opening_date) 
+# making pre and post covid variable 
+for(i in 1:length(rownames(final_merge))){
+  if (final_merge$opening_date[i] >= "2020-03-15"){
+    final_merge$covid[i] <- 1
+  }
+  else final_merge$covid[i] <- 0 
+}
+```
+
+```{r}
+final_merge <- fread("~/Desktop/Data Mining/Data/nyt_and_imdb_data.csv")
+final_merge$runtimeMinutes <- as.numeric(final_merge$runtimeMinutes)
+hist(final_merge$opening_date, "days") # super interesting! 
+hist(final_merge$opening_date, "months") # super interesting! 
+# playing with different models 
+ols <- glm(critics_pick ~ opening_date, data=final_merge, family="binomial")
+summary(ols)
+# high p value 
+ols <- lm(averageRating ~ opening_date, data=final_merge)
+summary(ols)
+# high p value 
+hist(final_merge$numVotes)
+hist(final_merge$runtimeMinutes)
+ols <- glm(critics_pick ~ runtimeMinutes + averageRating + numVotes, data=final_merge, family="binomial")
+summary(ols)
+# critics pick and average rating have a significant relatinship!! 
+ols <- lm(averageRating ~ runtimeMinutes + numVotes + sent_sd + sent_sum, data=final_merge)
+summary(ols)
+# runtime, numVotes, critics pick, runtime, and sent sd have a significant relationship 
+plot(final_merge$sent_sd, final_merge$averageRating) 
+hist(final_merge$sent_sum)
+cor(final_merge$averageRating, final_merge$numVotes)
+```
+```{r sentiment}
+library(syuzhet)
+for(i in 1:length(rownames(final_merge))){
+  text <- get_tokens(final_merge$summary[i])
+  syuzhet_vector <- get_sentiment(text, method="syuzhet")
+  final_merge$sent_mean[i] <- mean(syuzhet_vector)
+  final_merge$sent_sd[i] <- sd(syuzhet_vector)
+  final_merge$sent_sum[i] <- sum(syuzhet_vector)
+}
+tail(final_merge)
+# one data issue is that there are 267 summaries that do not have any positive or negative words in the dataset and therefore have a mean, sd, and sum of 0 
+final_merge[which(final_merge$sent_sum ==max(final_merge$sent_sum)),] # most positive 
+final_merge[which(final_merge$sent_sum ==min(final_merge$sent_sum)),] # most negative 
+```
+
+
+```{r}
+library(caret)
+library(Matrix)
+library(glmnet)
+# Exclude non-numeric
+final_merge <- as.data.frame(final_merge)
+wanted_cols <- c("averageRating", "runtimeMinutes", "covid", "numVotes", "critics_pick", "sent_mean", "sent_sd", "sent_sum")
+head(final_merge)
+reg_data <- final_merge[,wanted_cols]
+reg_data[is.na(reg_data)] <- 0
+# Defining the MSE
+mse <-function(actual, pred){
+  return(mean((actual - pred)^2))
+}
+
+# Creating 10-folds
+set.seed(123)
+test_folds <- createFolds(reg_data$covid, k = 10)
+#ols <- glm(covid ~ runtimeMinutes + averageRating + numVotes + critics_pick + sent_mean + sent_sd + sent_sum, data=final_merge, family="binomial")
+#summary(ols)
+#plot(ols)
+# OLS
+ols <-function(test, train){
+  fit <- glm(train$covid ~ ., family=binomial(), data=train)
+  pred <- predict(fit, test)
+  return(mse(test$covid, pred))
+}
+
+# STEPWISE
+stepwise <-function(test, train){
+  fit = glm(train$covid ~ ., family="binomial", data=train)
+  fit_summary = summary(fit)$coefficients
+  okay_features = rownames(fit_summary)[fit_summary[, 4] < 0.05]
+  init_formula = paste('train$covid ~', paste(okay_features[-1], collapse ='+'))
+  init_mod = glm(init_formula, family="binomial", data=train)
+  step_mod <- step(init_mod, "~.", family="binomial", trace = 0)
+  pred <- predict(step_mod, test)
+  return(mse(test$covid, pred))
+}
+
+# LASSO 
+lasso <-function(test, train){
+  x_train <- Matrix(as.matrix(train[ , -which(colnames(train) == "covid")]), sparse = TRUE)
+  y_train <- train$covid
+  x_test <- Matrix(as.matrix(test[ , -which(colnames(test) == "covid")]), sparse = TRUE)
+  y_test <- test$covid
+  lasso_cv <- cv.glmnet(x_train, y_train, alpha = 1, nfolds = 5, family="binomial", intercept = TRUE)
+  lasso_mod <- glmnet(x_train, y_train, alpha = 1, family="binomial", lambda = lasso_cv$lambda.min)
+  pred <- predict(lasso_mod, x_test)
+  return(mse(y_test, pred))
+}
+
+# RIDGE
+ridge <-function(test, train){
+  x_train <- Matrix(as.matrix(train[ , -which(colnames(train) == "covid")]), sparse = TRUE)
+  y_train <- train$covid
+  x_test <- Matrix(as.matrix(test[ , -which(colnames(test) == "covid")]), sparse = TRUE)
+  y_test <- test$covid
+  ridge_cv <- cv.glmnet(x_train, y_train, alpha = 1, nfolds = 5, family="binomial", intercept = TRUE)
+  ridge_mod <- glmnet(x_train, y_train, alpha = 0, family="binomial", lambda = ridge_cv$lambda.min)
+  pred <- predict(ridge_mod, x_test)
+  return(mse(y_test, pred))
+}
+
+mod <- data.frame(matrix(nrow = 5, ncol = 5))
+colnames(mod) <- c("ols", "stepwise", "lasso", "ridge", "min")
+for(i in 1:10){
+  test <- reg_data[test_folds[[i]], ]
+  train <- reg_data[-test_folds[[i]], ]
+  mod[i, "ols"] <- ols(test, train)
+  mod[i, "stepwise"] <- stepwise(test, train)
+  mod[i, "lasso"] <- lasso(test, train)
+  mod[i, "ridge"] <- ridge(test, train)
+}
+for(i in 1:10){
+  mod[i, "min"] <- names(which.min(mod[i, ]))
+}
+print(mod)
+# lasso performs the best almost all the time, so let's use lasso! 
+```
+
+
+```{r}
+# using lasso! 
+#lasso <-function(test, train){
+#  x_train <- Matrix(as.matrix(train[ , -which(colnames(train) == "covid")]), sparse = TRUE)
+#  y_train <- train$covid
+#  x_test <- Matrix(as.matrix(test[ , -which(colnames(test) == "covid")]), sparse = TRUE)
+#  y_test <- test$covid
+#  lasso_cv <- cv.glmnet(x_train, y_train, alpha = 1, nfolds = 5, family="binomial", intercept = TRUE)
+#  lasso_mod <- glmnet(x_train, y_train, alpha = 1, family="binomial", lambda = lasso_cv$lambda.min)
+#  pred <- predict(lasso_mod, x_test)
+#  return(summary(lasso_cv))
+#}
+all_x <- Matrix(as.matrix(reg_data[ , -which(colnames(reg_data) == "covid")]), sparse = TRUE)
+all_y <- reg_data$covid
+#without norm
+lasso_cv <- cv.glmnet(all_x, all_y, alpha = 1, nfolds = 5, intercept = TRUE)
+lasso_mod <- glmnet(all_x, all_y, alpha = 1, lambda = lasso_cv$lambda.min)
+not_norm_coefficients <- as.matrix(lasso_mod$beta)
+plot(not_norm_coefficients, main = "Coefficients of Lasso", ylab = "Beta")
+#with norm 
+all_x_scaled <- scale(Matrix(as.matrix(reg_data[ , -which(colnames(reg_data) == "covid")])))
+lasso_cv <- cv.glmnet(all_x_scaled, all_y, alpha = 1, nfolds = 5, intercept = TRUE)
+lasso_mod <- glmnet(all_x_scaled, all_y, alpha = 1, lambda = lasso_cv$lambda.min)
+yes_norm_coefficients <- as.matrix(lasso_mod$beta)
+plot(yes_norm_coefficients, main = "Coefficients of Lasso", ylab = "Beta")
+#for(i in 1:10){
+#  test <- reg_data[test_folds[[i]], ]
+#  train <- reg_data[-test_folds[[i]], ]
+#  x_train <- Matrix(as.matrix(train[ , -which(colnames(train) == "covid")]), sparse = TRUE)
+#  y_train <- train$covid
+#  x_test <- Matrix(as.matrix(test[ , -which(colnames(test) == "covid")]), sparse = TRUE)
+#  y_test <- test$covid
+#  lasso_cv <- cv.glmnet(x_train, y_train, alpha = 1, nfolds = 5, family="binomial", intercept = TRUE)
+#  lasso_mod <- glmnet(x_train, y_train, alpha = 1, family="binomial", lambda = lasso_cv$lambda.min)
+#  pred <- predict(lasso_mod, x_test)
+#  norm_coefficients <- as.matrix(lasso_mod$beta)
+#}
+# average rating has the highest association with the "covid" variable, 
+top_tokens_not_norm <- rownames(not_norm_coefficients)[order(abs(not_norm_coefficients), decreasing = TRUE)[1:5]]
+top_tokens_norm <- rownames(yes_norm_coefficients)[order(abs(yes_norm_coefficients), decreasing = TRUE)[1:5]]
+sum(top_tokens_norm %in% top_tokens_not_norm)
+top_tokens_norm[which(top_tokens_norm %in% top_tokens_not_norm)] 
+```
+averageRating, runtimeMinutes, and sent_mean are the columns that overlap in the top 5 for normalized and not normalized
+
+this means that averageRating, runtimeMinutes, and sent_mean have the strongest associations with the covid variable. This means that they had the strongest nonzero coefficients. 
+
+
+
+```{r}
+library(genderdata)
+for (i in 1:length(nyt_reviews$author)) {
+  gender <- gender(nyt_reviews$first_name)$gender
+  nyt_reviews$gender[i] <- gender
+  i <- i + 1
+}
+```
+
+
+```{r}
+# binarize genre
+# do ols based only on genre columns, and see which ones are most correlated with covid
+# see which are most highly correlated with critic's pick (NYT)
+# see which are most highly correlated with IMDB rating
+# look at difference between which genres are best
+# model is just rating vs [genres]
+
+# see which genres are most highly correlated with covid
+# model is covid vs [genres]
+head(final_merge)
+genres <- c()
+p <- 1
+for (i in 1:length(final_merge$genres)) {
+  movie_genres <- get_tokens(final_merge$genres[i],",")
+  if (length(movie_genres) > 0) {
+    for (j in 1:length(movie_genres)) {
+      if (!movie_genres[j] %in% genres) {
+        genres[p] <- movie_genres[j]
+        p <- p + 1
+      }
+    }
+  }
+}
+remove <- c("\\n")
+genres <- genres[!genres %in% remove]
+for (i in genres) {
+  final_merge[,i] <- 0
+}
+head(final_merge)
+
+for (i in 1:length(final_merge$genres)) {
+  movie_genres <- get_tokens(final_merge$genres[i],",")
+  if (length(movie_genres) > 0) {
+    for (j in movie_genres) {
+      if (j != "\\n"){
+        final_merge[,j][i] <- 1
+      }
+    }
+  }
+}
+head(final_merge)
+write.csv(final_merge, "~/Desktop/Data Mining/Data/movies_with_genres.csv")
+
+
+```
+
+
+```{r}
+covid <- c("covid")
+wanted_cols <- c(covid, genres)
+wanted_cols
+genre_data <- final_merge[,wanted_cols]
+class(genre_data)
+
+# Creating 10-folds
+set.seed(123)
+test_folds <- createFolds(genre_data$covid, k = 10)
+
+mod <- data.frame(matrix(nrow = 5, ncol = 5))
+colnames(mod) <- c("ols", "stepwise", "lasso", "ridge", "min")
+for(i in 1:10){
+  test <- genre_data[test_folds[[i]], ]
+  train <- genre_data[-test_folds[[i]], ]
+  mod[i, "ols"] <- ols(test, train)
+  mod[i, "stepwise"] <- stepwise(test, train)
+  mod[i, "lasso"] <- lasso(test, train)
+  mod[i, "ridge"] <- ridge(test, train)
+}
+for(i in 1:10){
+  mod[i, "min"] <- names(which.min(mod[i, ]))
+}
+print(mod)
+```
+
+```{r}
+# THIS IS USING GENRE TO PREDICT COVID VARIABLE
+all_x <- Matrix(as.matrix(genre_data[ , -which(colnames(genre_data) == "covid")]), sparse = TRUE)
+all_y <- genre_data$covid
+#without norm
+lasso_cv <- cv.glmnet(all_x, all_y, alpha = 1, nfolds = 5, intercept = TRUE)
+lasso_mod <- glmnet(all_x, all_y, alpha = 1, lambda = lasso_cv$lambda.min)
+not_norm_coefficients <- as.matrix(lasso_mod$beta)
+plot(not_norm_coefficients, main = "Coefficients of Lasso", ylab = "Beta")
+#with norm 
+all_x_scaled <- scale(Matrix(as.matrix(genre_data[ , -which(colnames(genre_data) == "covid")])))
+lasso_cv <- cv.glmnet(all_x_scaled, all_y, alpha = 1, nfolds = 5, intercept = TRUE)
+lasso_mod <- glmnet(all_x_scaled, all_y, alpha = 1, lambda = lasso_cv$lambda.min)
+yes_norm_coefficients <- as.matrix(lasso_mod$beta)
+plot(yes_norm_coefficients, main = "Coefficients of Lasso", ylab = "Beta")
+
+top_tokens_not_norm <- rownames(not_norm_coefficients)[order(abs(not_norm_coefficients), decreasing = TRUE)[1:5]]
+top_tokens_norm <- rownames(yes_norm_coefficients)[order(abs(yes_norm_coefficients), decreasing = TRUE)[1:5]]
+sum(top_tokens_norm %in% top_tokens_not_norm)
+top_tokens_norm[which(top_tokens_norm %in% top_tokens_not_norm)] 
+# It seems as though people really enjoyed watching music, documentary, drama genre movies during the COVID pandemic. 
+```
+
+```{r}
+head(final_merge)
+critics_pick <- c("critics_pick")
+wanted_cols <- c(critics_pick, genres)
+wanted_cols
+colnames(final_merge)
+genre_data_pre_covid <- final_merge[final_merge$covid == 0, wanted_cols]
+# Creating 10-folds
+set.seed(123)
+test_folds <- createFolds(genre_data_pre_covid$critics_pick, k = 10)
+
+# OLS
+ols <-function(test, train){
+  fit <- glm(train$critics_pick ~ ., family=binomial(), data=train)
+  pred <- predict(fit, test)
+  return(mse(test$critics_pick, pred))
+}
+
+# STEPWISE
+stepwise <-function(test, train){
+  fit = glm(train$critics_pick ~ ., family="binomial", data=train)
+  fit_summary = summary(fit)$coefficients
+  okay_features = rownames(fit_summary)[fit_summary[, 4] < 0.05]
+  init_formula = paste('train$critics_pick ~', paste(okay_features[-1], collapse ='+'))
+  init_mod = glm(init_formula, family="binomial", data=train)
+  step_mod <- step(init_mod, "~.", family="binomial", trace = 0)
+  pred <- predict(step_mod, test)
+  return(mse(test$critics_pick, pred))
+}
+
+# LASSO 
+lasso <-function(test, train){
+  x_train <- Matrix(as.matrix(train[ , -which(colnames(train) == "critics_pick")]), sparse = TRUE)
+  y_train <- train$critics_pick
+  x_test <- Matrix(as.matrix(test[ , -which(colnames(test) == "critics_pick")]), sparse = TRUE)
+  y_test <- test$critics_pick
+  lasso_cv <- cv.glmnet(x_train, y_train, alpha = 1, nfolds = 5, family="binomial", intercept = TRUE)
+  lasso_mod <- glmnet(x_train, y_train, alpha = 1, family="binomial", lambda = lasso_cv$lambda.min)
+  pred <- predict(lasso_mod, x_test)
+  return(mse(y_test, pred))
+}
+
+# RIDGE
+ridge <-function(test, train){
+  x_train <- Matrix(as.matrix(train[ , -which(colnames(train) == "critics_pick")]), sparse = TRUE)
+  y_train <- train$critics_pick
+  x_test <- Matrix(as.matrix(test[ , -which(colnames(test) == "critics_pick")]), sparse = TRUE)
+  y_test <- test$critics_pick
+  ridge_cv <- cv.glmnet(x_train, y_train, alpha = 1, nfolds = 5, family="binomial", intercept = TRUE)
+  ridge_mod <- glmnet(x_train, y_train, alpha = 0, family="binomial", lambda = ridge_cv$lambda.min)
+  pred <- predict(ridge_mod, x_test)
+  return(mse(y_test, pred))
+}
+
+mod <- data.frame(matrix(nrow = 5, ncol = 5))
+colnames(mod) <- c("ols", "stepwise", "lasso", "ridge", "min")
+for(i in 1:10){
+  test <- genre_data_pre_covid[test_folds[[i]], ]
+  train <- genre_data_pre_covid[-test_folds[[i]], ]
+  mod[i, "ols"] <- ols(test, train)
+  mod[i, "stepwise"] <- stepwise(test, train)
+  mod[i, "lasso"] <- lasso(test, train)
+  mod[i, "ridge"] <- ridge(test, train)
+}
+for(i in 1:10){
+  mod[i, "min"] <- names(which.min(mod[i, ]))
+}
+print(mod)
+```
+
+```{r}
+# PRE-COVID BEST GENRES BASED ON NYTREVIEWS
+all_x <- Matrix(as.matrix(genre_data_pre_covid[ , -which(colnames(genre_data_pre_covid) == "critics_pick")]), sparse = TRUE)
+all_y <- genre_data_pre_covid$critics_pick
+#without norm
+lasso_cv <- cv.glmnet(all_x, all_y, alpha = 1, nfolds = 5, intercept = TRUE)
+lasso_mod <- glmnet(all_x, all_y, alpha = 1, lambda = lasso_cv$lambda.min)
+not_norm_coefficients <- as.matrix(lasso_mod$beta)
+plot(not_norm_coefficients, main = "Coefficients of Lasso", ylab = "Beta")
+#with norm 
+all_x_scaled <- scale(Matrix(as.matrix(genre_data_pre_covid[ , -which(colnames(genre_data_pre_covid) == "critics_pick")])))
+lasso_cv <- cv.glmnet(all_x_scaled, all_y, alpha = 1, nfolds = 5, intercept = TRUE)
+lasso_mod <- glmnet(all_x_scaled, all_y, alpha = 1, lambda = lasso_cv$lambda.min)
+yes_norm_coefficients <- as.matrix(lasso_mod$beta)
+plot(yes_norm_coefficients, main = "Coefficients of Lasso", ylab = "Beta")
+
+top_tokens_not_norm <- rownames(not_norm_coefficients)[order(abs(not_norm_coefficients), decreasing = TRUE)[1:5]]
+top_tokens_norm <- rownames(yes_norm_coefficients)[order(abs(yes_norm_coefficients), decreasing = TRUE)[1:5]]
+sum(top_tokens_norm %in% top_tokens_not_norm)
+top_tokens_norm[which(top_tokens_norm %in% top_tokens_not_norm)] 
+# The top genres pre-covid seem to be comedy, thriller, fantasy, western, and music based on the NYT Movie Reviews. 
+```
+
+```{r}
+# NYTREVIEWS BEST GENRES POST-COVID
+final_merge <- read.csv("~/Desktop/Data Mining/Data/movies_with_genres.csv")
+critics_pick <- c("critics_pick")
+wanted_cols <- c(critics_pick, genres)
+genres
+colnames(final_merge)
+sci_fi <- c("sci-fi")
+wanted_cols <- wanted_cols[!wanted_cols %in% sci_fi]
+append(wanted_cols, "sci.fi")
+genre_data_post_covid <- final_merge[final_merge$covid == 1, wanted_cols]
+
+# Creating 10-folds
+set.seed(123)
+test_folds <- createFolds(genre_data_post_covid$critics_pick, k = 10)
+
+mod <- data.frame(matrix(nrow = 5, ncol = 5))
+colnames(mod) <- c("ols", "stepwise", "lasso", "ridge", "min")
+for(i in 1:10){
+  test <- genre_data_post_covid[test_folds[[i]], ]
+  train <- genre_data_post_covid[-test_folds[[i]], ]
+  mod[i, "ols"] <- ols(test, train)
+  #mod[i, "stepwise"] <- stepwise(test, train)
+  mod[i, "lasso"] <- lasso(test, train)
+  mod[i, "ridge"] <- ridge(test, train)
+}
+for(i in 1:10){
+  mod[i, "min"] <- names(which.min(mod[i, ]))
+}
+print(mod)
+
+# POST-COVID BEST GENRES BASED ON NYTREVIEWS
+all_x <- Matrix(as.matrix(genre_data_post_covid[ , -which(colnames(genre_data_post_covid) == "critics_pick")]), sparse = TRUE)
+all_y <- genre_data_post_covid$critics_pick
+#without norm
+lasso_cv <- cv.glmnet(all_x, all_y, alpha = 1, nfolds = 5, intercept = TRUE)
+lasso_mod <- glmnet(all_x, all_y, alpha = 1, lambda = lasso_cv$lambda.min)
+not_norm_coefficients <- as.matrix(lasso_mod$beta)
+plot(not_norm_coefficients, main = "Coefficients of Lasso", ylab = "Beta")
+#with norm 
+all_x_scaled <- scale(Matrix(as.matrix(genre_data_post_covid[ , -which(colnames(genre_data_post_covid) == "critics_pick")])))
+lasso_cv <- cv.glmnet(all_x_scaled, all_y, alpha = 1, nfolds = 5, intercept = TRUE)
+lasso_mod <- glmnet(all_x_scaled, all_y, alpha = 1, lambda = lasso_cv$lambda.min)
+yes_norm_coefficients <- as.matrix(lasso_mod$beta)
+plot(yes_norm_coefficients, main = "Coefficients of Lasso", ylab = "Beta")
+
+top_tokens_not_norm <- rownames(not_norm_coefficients)[order(abs(not_norm_coefficients), decreasing = TRUE)[1:5]]
+top_tokens_norm <- rownames(yes_norm_coefficients)[order(abs(yes_norm_coefficients), decreasing = TRUE)[1:5]]
+sum(top_tokens_norm %in% top_tokens_not_norm)
+top_tokens_norm[which(top_tokens_norm %in% top_tokens_not_norm)] 
+# The top genres post-covid seem to be action, thriller, drama, horror, and crime based on the NYT Movie Reviews. 
+```
+
+
+```{r}
+# IMDB BEST GENRES PRE-COVID
+averageRating <- c("averageRating")
+wanted_cols <- c(averageRating, genres)
+wanted_cols <- wanted_cols[!wanted_cols %in% sci_fi]
+head(final_merge$sci.fi)
+wanted_cols <- append(wanted_cols, "sci.fi")
+wanted_cols
+genre_data_pre_covid <- final_merge[final_merge$covid == 0, wanted_cols]
+genre_data_pre_covid <- genre_data_pre_covid[!is.na(genre_data_pre_covid$averageRating),]
+
+# Creating 10-folds
+set.seed(123)
+test_folds <- createFolds(genre_data_pre_covid$averageRating, k = 10)
+
+# OLS
+ols <-function(test, train){
+  fit <- lm(train$averageRating ~ ., data=train)
+  pred <- predict(fit, test)
+  return(mse(test$averageRating, pred))
+}
+
+# STEPWISE
+stepwise <-function(test, train){
+  fit = lm(train$averageRating ~ ., data=train)
+  fit_summary = summary(fit)$coefficients
+  okay_features = rownames(fit_summary)[fit_summary[, 4] < 0.05]
+  init_formula = paste('train$averageRating ~', paste(okay_features[-1], collapse ='+'))
+  init_mod = lm(init_formula, data=train)
+  step_mod <- step(init_mod, "~.",  trace = 0)
+  pred <- predict(step_mod, test)
+  return(mse(test$averageRating, pred))
+}
+
+# LASSO 
+lasso <-function(test, train){
+  x_train <- Matrix(as.matrix(train[ , -which(colnames(train) == "averageRating")]), sparse = TRUE)
+  y_train <- train$averageRating
+  x_test <- Matrix(as.matrix(test[ , -which(colnames(test) == "averageRating")]), sparse = TRUE)
+  y_test <- test$averageRating
+  lasso_cv <- cv.glmnet(x_train, y_train, alpha = 1, nfolds = 5, intercept = TRUE)
+  lasso_mod <- glmnet(x_train, y_train, alpha = 1, lambda = lasso_cv$lambda.min)
+  pred <- predict(lasso_mod, x_test)
+  return(mse(y_test, pred))
+}
+
+# RIDGE
+ridge <-function(test, train){
+  x_train <- Matrix(as.matrix(train[ , -which(colnames(train) == "averageRating")]), sparse = TRUE)
+  y_train <- train$averageRating
+  x_test <- Matrix(as.matrix(test[ , -which(colnames(test) == "averageRating")]), sparse = TRUE)
+  y_test <- test$averageRating
+  ridge_cv <- cv.glmnet(x_train, y_train, alpha = 1, nfolds = 5, intercept = TRUE)
+  ridge_mod <- glmnet(x_train, y_train, alpha = 0, lambda = ridge_cv$lambda.min)
+  pred <- predict(ridge_mod, x_test)
+  return(mse(y_test, pred))
+}
+
+mod <- data.frame(matrix(nrow = 5, ncol = 5))
+colnames(mod) <- c("ols", "stepwise", "lasso", "ridge", "min")
+for(i in 1:10){
+  test <- genre_data_pre_covid[test_folds[[i]], ]
+  train <- genre_data_pre_covid[-test_folds[[i]], ]
+  #mod[i, "ols"] <- ols(test, train)
+  mod[i, "stepwise"] <- stepwise(test, train)
+  mod[i, "lasso"] <- lasso(test, train)
+  mod[i, "ridge"] <- ridge(test, train)
+}
+for(i in 1:10){
+  mod[i, "min"] <- names(which.min(mod[i, ]))
+}
+print(mod)
+# Lasso does the best job
+
+all_x <- Matrix(as.matrix(genre_data_pre_covid[ , -which(colnames(genre_data_pre_covid) == "averageRating")]), sparse = TRUE)
+all_y <- genre_data_pre_covid$averageRating
+#without norm
+lasso_cv <- cv.glmnet(all_x, all_y, alpha = 1, nfolds = 5, intercept = TRUE)
+lasso_mod <- glmnet(all_x, all_y, alpha = 1, lambda = lasso_cv$lambda.min)
+not_norm_coefficients <- as.matrix(lasso_mod$beta)
+plot(not_norm_coefficients, main = "Coefficients of Lasso", ylab = "Beta")
+#with norm 
+all_x_scaled <- scale(Matrix(as.matrix(genre_data_pre_covid[ , -which(colnames(genre_data_pre_covid) == "averageRating")])))
+lasso_cv <- cv.glmnet(all_x_scaled, all_y, alpha = 1, nfolds = 5, intercept = TRUE)
+lasso_mod <- glmnet(all_x_scaled, all_y, alpha = 1, lambda = lasso_cv$lambda.min)
+yes_norm_coefficients <- as.matrix(lasso_mod$beta)
+plot(yes_norm_coefficients, main = "Coefficients of Lasso", ylab = "Beta")
+
+top_tokens_not_norm <- rownames(not_norm_coefficients)[order(abs(not_norm_coefficients), decreasing = TRUE)[1:5]]
+top_tokens_norm <- rownames(yes_norm_coefficients)[order(abs(yes_norm_coefficients), decreasing = TRUE)[1:5]]
+sum(top_tokens_norm %in% top_tokens_not_norm)
+top_tokens_norm[which(top_tokens_norm %in% top_tokens_not_norm)]
+# Based on IMDB data, the best rated genres pre-covid seem to be documentary, thriller, and war.
+```
+
+```{r}
+# IMDB BEST GENRES POST-COVID
+averageRating <- c("averageRating")
+wanted_cols <- c(averageRating, genres)
+wanted_cols <- wanted_cols[!wanted_cols %in% sci_fi]
+wanted_cols <- append(wanted_cols, "sci.fi")
+genre_data_post_covid <- final_merge[final_merge$covid == 1, wanted_cols]
+genre_data_post_covid <- genre_data_post_covid[!is.na(genre_data_post_covid$averageRating),]
+
+# Creating 10-folds
+set.seed(123)
+test_folds <- createFolds(genre_data_post_covid$averageRating, k = 10)
+
+mod <- data.frame(matrix(nrow = 5, ncol = 5))
+colnames(mod) <- c("ols", "stepwise", "lasso", "ridge", "min")
+for(i in 1:10){
+  test <- genre_data_post_covid[test_folds[[i]], ]
+  train <- genre_data_post_covid[-test_folds[[i]], ]
+  mod[i, "ols"] <- ols(test, train)
+  mod[i, "stepwise"] <- stepwise(test, train)
+  mod[i, "lasso"] <- lasso(test, train)
+  mod[i, "ridge"] <- ridge(test, train)
+}
+for(i in 1:10){
+  mod[i, "min"] <- names(which.min(mod[i, ]))
+}
+print(mod)
+# Stepwise does the best job
+
+all_x <- Matrix(as.matrix(genre_data_post_covid[ , -which(colnames(genre_data_post_covid) == "averageRating")]), sparse = TRUE)
+all_y <- genre_data_post_covid$averageRating
+#without norm
+lasso_cv <- cv.glmnet(all_x, all_y, alpha = 1, nfolds = 5, intercept = TRUE)
+lasso_mod <- glmnet(all_x, all_y, alpha = 1, lambda = lasso_cv$lambda.min)
+not_norm_coefficients <- as.matrix(lasso_mod$beta)
+plot(not_norm_coefficients, main = "Coefficients of Lasso", ylab = "Beta")
+#with norm 
+all_x_scaled <- scale(Matrix(as.matrix(genre_data_post_covid[ , -which(colnames(genre_data_post_covid) == "averageRating")])))
+lasso_cv <- cv.glmnet(all_x_scaled, all_y, alpha = 1, nfolds = 5, intercept = TRUE)
+lasso_mod <- glmnet(all_x_scaled, all_y, alpha = 1, lambda = lasso_cv$lambda.min)
+yes_norm_coefficients <- as.matrix(lasso_mod$beta)
+plot(yes_norm_coefficients, main = "Coefficients of Lasso", ylab = "Beta")
+
+top_tokens_not_norm <- rownames(not_norm_coefficients)[order(abs(not_norm_coefficients), decreasing = TRUE)[1:5]]
+top_tokens_norm <- rownames(yes_norm_coefficients)[order(abs(yes_norm_coefficients), decreasing = TRUE)[1:5]]
+sum(top_tokens_norm %in% top_tokens_not_norm)
+top_tokens_norm[which(top_tokens_norm %in% top_tokens_not_norm)]
+# Based on IMDB data, the best rated genres post-covid seem to be documentary, horror, and western.
+```
+
+
+```{r}
+# IGNORE THIS
+critics_pick <- c("critics_pick")
+wanted_cols <- c(critics_pick, genres)
+genre_data <- final_merge[,wanted_cols]
+
+# Creating 10-folds
+set.seed(123)
+test_folds <- createFolds(genre_data$critics_pick, k = 10)
+
+
+mod <- data.frame(matrix(nrow = 5, ncol = 5))
+colnames(mod) <- c("ols", "stepwise", "lasso", "ridge", "min")
+for(i in 1:10){
+  test <- genre_data[test_folds[[i]], ]
+  train <- genre_data[-test_folds[[i]], ]
+  mod[i, "ols"] <- ols(test, train)
+  mod[i, "stepwise"] <- stepwise(test, train)
+  mod[i, "lasso"] <- lasso(test, train)
+  mod[i, "ridge"] <- ridge(test, train)
+}
+for(i in 1:10){
+  mod[i, "min"] <- names(which.min(mod[i, ]))
+}
+print(mod)
+
+all_x <- Matrix(as.matrix(genre_data[ , -which(colnames(genre_data) == "critics_pick")]), sparse = TRUE)
+all_y <- genre_data$critics_pick
+#without norm
+lasso_cv <- cv.glmnet(all_x, all_y, alpha = 1, nfolds = 5, intercept = TRUE)
+lasso_mod <- glmnet(all_x, all_y, alpha = 1, lambda = lasso_cv$lambda.min)
+not_norm_coefficients <- as.matrix(lasso_mod$beta)
+plot(not_norm_coefficients, main = "Coefficients of Lasso", ylab = "Beta")
+#with norm 
+all_x_scaled <- scale(Matrix(as.matrix(genre_data[ , -which(colnames(reg_data) == "covid")])))
+lasso_cv <- cv.glmnet(all_x_scaled, all_y, alpha = 1, nfolds = 5, intercept = TRUE)
+lasso_mod <- glmnet(all_x_scaled, all_y, alpha = 1, lambda = lasso_cv$lambda.min)
+yes_norm_coefficients <- as.matrix(lasso_mod$beta)
+plot(yes_norm_coefficients, main = "Coefficients of Lasso", ylab = "Beta")
+
+top_tokens_not_norm <- rownames(not_norm_coefficients)[order(abs(not_norm_coefficients), decreasing = TRUE)[1:5]]
+top_tokens_norm <- rownames(yes_norm_coefficients)[order(abs(yes_norm_coefficients), decreasing = TRUE)[1:5]]
+sum(top_tokens_norm %in% top_tokens_not_norm)
+top_tokens_norm[which(top_tokens_norm %in% top_tokens_not_norm)] 
+```
+
+
