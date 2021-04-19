@@ -544,14 +544,14 @@ print(mod)
 all_x <- Matrix(as.matrix(genre_data_pre_covid[ , -which(colnames(genre_data_pre_covid) == "critics_pick")]), sparse = TRUE)
 all_y <- genre_data_pre_covid$critics_pick
 #without norm
-lasso_cv <- cv.glmnet(all_x, all_y, alpha = 1, nfolds = 5, intercept = TRUE)
-lasso_mod <- glmnet(all_x, all_y, alpha = 1, lambda = lasso_cv$lambda.min)
+lasso_cv <- cv.glmnet(all_x, all_y, alpha = 1,  family="binomial",  nfolds = 5, intercept = TRUE)
+lasso_mod <- glmnet(all_x, all_y, alpha = 1,  family="binomial", lambda = lasso_cv$lambda.min)
 not_norm_coefficients <- as.matrix(lasso_mod$beta)
 plot(not_norm_coefficients, main = "Coefficients of Lasso", ylab = "Beta")
 #with norm 
 all_x_scaled <- scale(Matrix(as.matrix(genre_data_pre_covid[ , -which(colnames(genre_data_pre_covid) == "critics_pick")])))
-lasso_cv <- cv.glmnet(all_x_scaled, all_y, alpha = 1, nfolds = 5, intercept = TRUE)
-lasso_mod <- glmnet(all_x_scaled, all_y, alpha = 1, lambda = lasso_cv$lambda.min)
+lasso_cv <- cv.glmnet(all_x_scaled, all_y, alpha = 1,  family="binomial", nfolds = 5, intercept = TRUE)
+lasso_mod <- glmnet(all_x_scaled, all_y, alpha = 1,  family="binomial", lambda = lasso_cv$lambda.min)
 yes_norm_coefficients <- as.matrix(lasso_mod$beta)
 plot(yes_norm_coefficients, main = "Coefficients of Lasso", ylab = "Beta")
 
@@ -560,6 +560,12 @@ top_tokens_norm <- rownames(yes_norm_coefficients)[order(abs(yes_norm_coefficien
 sum(top_tokens_norm %in% top_tokens_not_norm)
 nyt_pre_covid <- top_tokens_norm[which(top_tokens_norm %in% top_tokens_not_norm)] 
 # The top genres pre-covid seem to be comedy, thriller, fantasy, western, and music based on the NYT Movie Reviews. 
+qplot(not_norm_coefficients, 
+     main= "Histogram of Coefficients of Lasso for NYT Rating Pre-Covid", 
+     xlab= "Lasso Coefficients",
+     geom="histogram"
+     ) +
+  scale_x_continuous(limits = c(-1,1))
 ```
 
 ```{r}
@@ -594,14 +600,15 @@ print(mod)
 all_x <- Matrix(as.matrix(genre_data_post_covid[ , -which(colnames(genre_data_post_covid) == "critics_pick")]), sparse = TRUE)
 all_y <- genre_data_post_covid$critics_pick
 #without norm
-lasso_cv <- cv.glmnet(all_x, all_y, alpha = 1, nfolds = 5, intercept = TRUE)
-lasso_mod <- glmnet(all_x, all_y, alpha = 1, lambda = lasso_cv$lambda.min)
+lasso_cv <- cv.glmnet(all_x, all_y, alpha = 1,  family="binomial", nfolds = 5, intercept = TRUE)
+lasso_mod <- glmnet(all_x, all_y, alpha = 1,  family="binomial", lambda = lasso_cv$lambda.min)
 not_norm_coefficients <- as.matrix(lasso_mod$beta)
 plot(not_norm_coefficients, main = "Coefficients of Lasso", ylab = "Beta")
 #with norm 
 all_x_scaled <- scale(Matrix(as.matrix(genre_data_post_covid[ , -which(colnames(genre_data_post_covid) == "critics_pick")])))
-lasso_cv <- cv.glmnet(all_x_scaled, all_y, alpha = 1, nfolds = 5, intercept = TRUE)
-lasso_mod <- glmnet(all_x_scaled, all_y, alpha = 1, lambda = lasso_cv$lambda.min)
+lasso_cv <- cv.glmnet(all_x_scaled, all_y, family="binomial", alpha = 1, nfolds = 5, intercept = TRUE)
+plot(lasso_cv)
+lasso_mod <- glmnet(all_x_scaled, all_y, alpha = 1, family="binomial", lambda = lasso_cv$lambda.min)
 yes_norm_coefficients <- as.matrix(lasso_mod$beta)
 plot(yes_norm_coefficients, main = "Coefficients of Lasso", ylab = "Beta")
 
@@ -609,7 +616,21 @@ top_tokens_not_norm <- rownames(not_norm_coefficients)[order(abs(not_norm_coeffi
 top_tokens_norm <- rownames(yes_norm_coefficients)[order(abs(yes_norm_coefficients), decreasing = TRUE)[1:5]]
 sum(top_tokens_norm %in% top_tokens_not_norm)
 nyt_post_covid <- top_tokens_norm[which(top_tokens_norm %in% top_tokens_not_norm)] 
-# The top genres post-covid seem to be action, thriller, drama, horror, and crime based on the NYT Movie Reviews. 
+# The top genres post-covid seem to be action, thriller, drama, horror, and crime based on the NYT Movie Reviews.
+qplot(not_norm_coefficients, 
+     main= "Histogram of Coefficients of Lasso for NYT Rating Post-Covid", 
+     xlab= "Lasso Coefficients",
+     geom="histogram"
+     ) +
+  scale_x_continuous(limits = c(-1,1))
+
+sim <- cbind(as.numeric(coef(lasso_cv)), 
+             replicate(9,as.numeric(coef(cv.glmnet(x, y, family="binomial")))))
+plot(1:k, rowMeans(sim[-1,] != 0) + runif(k, -0.025, 0.025), 
+     xlab="Coefficient Index", ylab="Frequency not zero (jittered)",
+     main="Results of Repeated Cross-Validated Lasso Fits")
+
+
 ```
 
 
@@ -704,6 +725,14 @@ top_tokens_norm <- rownames(yes_norm_coefficients)[order(abs(yes_norm_coefficien
 sum(top_tokens_norm %in% top_tokens_not_norm)
 imdb_pre_covid <- top_tokens_norm[which(top_tokens_norm %in% top_tokens_not_norm)]
 # Based on IMDB data, the best rated genres pre-covid seem to be documentary, thriller, and war.
+all_coeffs <-c(not_norm_coefficients, yes_norm_coefficients)
+library(ggplot2)
+qplot(not_norm_coefficients, 
+     main= "Histogram of Coefficients of Lasso for IMDb Rating Pre-Covid", 
+     xlab= "Lasso Coefficients",
+     geom="histogram"
+     ) +
+  scale_x_continuous(limits = c(-1,1))
 ```
 
 ```{r}
@@ -753,6 +782,12 @@ top_tokens_norm <- rownames(yes_norm_coefficients)[order(abs(yes_norm_coefficien
 sum(top_tokens_norm %in% top_tokens_not_norm)
 imdb_post_covid <- top_tokens_norm[which(top_tokens_norm %in% top_tokens_not_norm)]
 # Based on IMDB data, the best rated genres post-covid seem to be documentary, horror, and western.
+qplot(not_norm_coefficients, 
+     main= "Histogram of Coefficients of Lasso for IMDb Rating Post-Covid", 
+     xlab= "Lasso Coefficients",
+     geom="histogram"
+     ) +
+  scale_x_continuous(limits = c(-1,1))
 ```
 
 
@@ -800,6 +835,12 @@ top_tokens_not_norm <- rownames(not_norm_coefficients)[order(abs(not_norm_coeffi
 top_tokens_norm <- rownames(yes_norm_coefficients)[order(abs(yes_norm_coefficients), decreasing = TRUE)[1:5]]
 sum(top_tokens_norm %in% top_tokens_not_norm)
 top_tokens_norm[which(top_tokens_norm %in% top_tokens_not_norm)] 
+qplot(not_norm_coefficients, 
+     main= "Histogram of Coefficients of Lasso for NYT Rating Post-Covid", 
+     xlab= "Lasso Coefficients",
+     geom="histogram"
+     ) +
+  scale_x_continuous(limits = c(-1,1))
 ```
 
 ```{r}
