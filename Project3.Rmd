@@ -141,6 +141,7 @@ merged <- merged[which(merged$startYear >= 2019),]
 merged <- merged[which(merged$startYear <= 2021),] 
 merged <- merged[which(merged$titleType == 'movie' | merged$titleType == 'tvmovie'),] 
 write.csv(merged, "imdb_data.csv")
+merged <- fread("~/Downloads/imdb_data.csv")
 dim(merged)
 #16557 rows lol 
 final_merge <- merge(merged, data, by.x="primaryTitle", by.y="title")
@@ -151,15 +152,13 @@ for(i in seq_along(rownames(final_merge))){
 } 
 final_merge$opening_date <- as.Date(unlist(opening_dates))
 final_merge <- final_merge[!which(final_merge$opening_date <= 2019-03-15),] 
+
+
+
+
 write.csv(final_merge, "nyt_and_imdb_data.csv")
 mean(which(final_merge$averageRating > quantile(final_merge$averageRating,prob=1-21.85/100, na.rm = TRUE))
      %in% which(final_merge$critics_pick == 1))
-genres <- list()
-for(i in seq_along(rownames(final_merge))){
-  genres[5] <- as.list(strsplit(as.character(final_merge$genres[5]),split=",")[[1]])
-} 
-#table(genres)
-# merge by social secruity data by first name 
 ```
 
 Interesting stats for the project pre-covid analysis: 
@@ -182,9 +181,12 @@ for(i in 1:length(rownames(final_merge))){
 ```
 
 ```{r}
+library(data.table)
 final_merge <- fread("~/Desktop/Data Mining/Data/nyt_and_imdb_data.csv")
 final_merge$runtimeMinutes <- as.numeric(final_merge$runtimeMinutes)
-hist(final_merge$opening_date, "days") # super interesting! 
+hist(final_merge$opening_date, "days", format = "%b %y", 
+     main="Histogram of Opening Dates of Movies vs. Density", 
+     xlab="Movie Opening Date") # super interesting! 
 hist(final_merge$opening_date, "months") # super interesting! 
 # playing with different models 
 ols <- glm(critics_pick ~ opening_date, data=final_merge, family="binomial")
@@ -225,10 +227,11 @@ final_merge[which(final_merge$sent_sum ==min(final_merge$sent_sum)),] # most neg
 library(caret)
 library(Matrix)
 library(glmnet)
+library(MLmetrics)
 # Exclude non-numeric
 final_merge <- as.data.frame(final_merge)
 wanted_cols <- c("averageRating", "runtimeMinutes", "covid", "numVotes", "critics_pick", "sent_mean", "sent_sd", "sent_sum")
-head(final_merge)
+final_merge$runtimeMinutes <- as.numeric(final_merge$runtimeMinutes)
 reg_data <- final_merge[,wanted_cols]
 reg_data[is.na(reg_data)] <- 0
 # Defining the MSE
@@ -244,9 +247,9 @@ test_folds <- createFolds(reg_data$covid, k = 10)
 #plot(ols)
 # OLS
 ols <-function(test, train){
-  fit <- glm(train$covid ~ ., family=binomial(), data=train)
+  fit <- glm(train$covid ~ ., family="binomial", data=train)
   pred <- predict(fit, test)
-  return(mse(test$covid, pred))
+  return(LogLoss(y_true = test$covid, y_pred = pred))
 }
 
 # STEPWISE
@@ -255,10 +258,10 @@ stepwise <-function(test, train){
   fit_summary = summary(fit)$coefficients
   okay_features = rownames(fit_summary)[fit_summary[, 4] < 0.05]
   init_formula = paste('train$covid ~', paste(okay_features[-1], collapse ='+'))
-  init_mod = glm(init_formula, family="binomial", data=train)
-  step_mod <- step(init_mod, "~.", family="binomial", trace = 0)
+  init_mod = glm(init_formula, data=train, family="binomial")
+  step_mod <- step(init_mod, "~.", trace = 0)
   pred <- predict(step_mod, test)
-  return(mse(test$covid, pred))
+  return(LogLoss(y_true = test$covid, y_pred = pred))
 }
 
 # LASSO 
@@ -270,7 +273,7 @@ lasso <-function(test, train){
   lasso_cv <- cv.glmnet(x_train, y_train, alpha = 1, nfolds = 5, family="binomial", intercept = TRUE)
   lasso_mod <- glmnet(x_train, y_train, alpha = 1, family="binomial", lambda = lasso_cv$lambda.min)
   pred <- predict(lasso_mod, x_test)
-  return(mse(y_test, pred))
+  return(LogLoss(y_true = y_test, y_pred=pred))
 }
 
 # RIDGE
@@ -282,7 +285,7 @@ ridge <-function(test, train){
   ridge_cv <- cv.glmnet(x_train, y_train, alpha = 1, nfolds = 5, family="binomial", intercept = TRUE)
   ridge_mod <- glmnet(x_train, y_train, alpha = 0, family="binomial", lambda = ridge_cv$lambda.min)
   pred <- predict(ridge_mod, x_test)
-  return(mse(y_test, pred))
+  return(LogLoss(y_true = y_test, y_pred=pred))
 }
 
 mod <- data.frame(matrix(nrow = 5, ncol = 5))
@@ -373,6 +376,8 @@ for (i in 1:length(nyt_reviews$author)) {
 # see which genres are most highly correlated with covid
 # model is covid vs [genres]
 head(final_merge)
+final_merge <- as.data.frame(final_merge)
+
 genres <- c()
 p <- 1
 for (i in 1:length(final_merge$genres)) {
@@ -404,7 +409,7 @@ for (i in 1:length(final_merge$genres)) {
   }
 }
 head(final_merge)
-write.csv(final_merge, "~/Desktop/Data Mining/Data/movies_with_genres.csv")
+write.csv(final_merge, "~/Desktop/Data Mining/Data/movies_with_genres_new_merge.csv")
 
 
 ```
@@ -415,6 +420,7 @@ covid <- c("covid")
 wanted_cols <- c(covid, genres)
 wanted_cols
 genre_data <- final_merge[,wanted_cols]
+colnames(genre_data)[which(colnames(genre_data) =="sci-fi")] <- "sci.fi"
 class(genre_data)
 
 # Creating 10-folds
@@ -427,7 +433,7 @@ for(i in 1:10){
   test <- genre_data[test_folds[[i]], ]
   train <- genre_data[-test_folds[[i]], ]
   mod[i, "ols"] <- ols(test, train)
-  mod[i, "stepwise"] <- stepwise(test, train)
+  #mod[i, "stepwise"] <- stepwise(test, train)
   mod[i, "lasso"] <- lasso(test, train)
   mod[i, "ridge"] <- ridge(test, train)
 }
@@ -461,11 +467,14 @@ top_tokens_norm[which(top_tokens_norm %in% top_tokens_not_norm)]
 ```
 
 ```{r}
+
+final_merge <- read.csv("~/Desktop/movies_with_genres_new_merge.csv")
 head(final_merge)
 critics_pick <- c("critics_pick")
 wanted_cols <- c(critics_pick, genres)
 wanted_cols
 colnames(final_merge)
+colnames(final_merge)[which(colnames(final_merge) =="sci.fi")] <- "sci-fi"
 genre_data_pre_covid <- final_merge[final_merge$covid == 0, wanted_cols]
 # Creating 10-folds
 set.seed(123)
@@ -473,17 +482,17 @@ test_folds <- createFolds(genre_data_pre_covid$critics_pick, k = 10)
 
 # OLS
 ols <-function(test, train){
-  fit <- glm(train$critics_pick ~ ., family=binomial(), data=train)
+  fit <- glm(critics_pick ~ ., family="binomial", data=train)
   pred <- predict(fit, test)
   return(mse(test$critics_pick, pred))
 }
 
 # STEPWISE
 stepwise <-function(test, train){
-  fit = glm(train$critics_pick ~ ., family="binomial", data=train)
+  fit = glm(critics_pick ~ ., family="binomial", data=train)
   fit_summary = summary(fit)$coefficients
   okay_features = rownames(fit_summary)[fit_summary[, 4] < 0.05]
-  init_formula = paste('train$critics_pick ~', paste(okay_features[-1], collapse ='+'))
+  init_formula = paste('critics_pick ~', paste(okay_features[-1], collapse ='+'))
   init_mod = glm(init_formula, family="binomial", data=train)
   step_mod <- step(init_mod, "~.", family="binomial", trace = 0)
   pred <- predict(step_mod, test)
@@ -549,7 +558,7 @@ plot(yes_norm_coefficients, main = "Coefficients of Lasso", ylab = "Beta")
 top_tokens_not_norm <- rownames(not_norm_coefficients)[order(abs(not_norm_coefficients), decreasing = TRUE)[1:5]]
 top_tokens_norm <- rownames(yes_norm_coefficients)[order(abs(yes_norm_coefficients), decreasing = TRUE)[1:5]]
 sum(top_tokens_norm %in% top_tokens_not_norm)
-top_tokens_norm[which(top_tokens_norm %in% top_tokens_not_norm)] 
+nyt_pre_covid <- top_tokens_norm[which(top_tokens_norm %in% top_tokens_not_norm)] 
 # The top genres pre-covid seem to be comedy, thriller, fantasy, western, and music based on the NYT Movie Reviews. 
 ```
 
@@ -559,10 +568,7 @@ final_merge <- read.csv("~/Desktop/Data Mining/Data/movies_with_genres.csv")
 critics_pick <- c("critics_pick")
 wanted_cols <- c(critics_pick, genres)
 genres
-colnames(final_merge)
-sci_fi <- c("sci-fi")
-wanted_cols <- wanted_cols[!wanted_cols %in% sci_fi]
-append(wanted_cols, "sci.fi")
+colnames(final_merge)[which(colnames(final_merge) =="sci.fi")] <- "sci-fi"
 genre_data_post_covid <- final_merge[final_merge$covid == 1, wanted_cols]
 
 # Creating 10-folds
@@ -602,7 +608,7 @@ plot(yes_norm_coefficients, main = "Coefficients of Lasso", ylab = "Beta")
 top_tokens_not_norm <- rownames(not_norm_coefficients)[order(abs(not_norm_coefficients), decreasing = TRUE)[1:5]]
 top_tokens_norm <- rownames(yes_norm_coefficients)[order(abs(yes_norm_coefficients), decreasing = TRUE)[1:5]]
 sum(top_tokens_norm %in% top_tokens_not_norm)
-top_tokens_norm[which(top_tokens_norm %in% top_tokens_not_norm)] 
+nyt_post_covid <- top_tokens_norm[which(top_tokens_norm %in% top_tokens_not_norm)] 
 # The top genres post-covid seem to be action, thriller, drama, horror, and crime based on the NYT Movie Reviews. 
 ```
 
@@ -611,12 +617,10 @@ top_tokens_norm[which(top_tokens_norm %in% top_tokens_not_norm)]
 # IMDB BEST GENRES PRE-COVID
 averageRating <- c("averageRating")
 wanted_cols <- c(averageRating, genres)
-wanted_cols <- wanted_cols[!wanted_cols %in% sci_fi]
-head(final_merge$sci.fi)
-wanted_cols <- append(wanted_cols, "sci.fi")
-wanted_cols
+colnames(final_merge)[which(colnames(final_merge) =="sci.fi")] <- "sci-fi"
+
 genre_data_pre_covid <- final_merge[final_merge$covid == 0, wanted_cols]
-genre_data_pre_covid <- genre_data_pre_covid[!is.na(genre_data_pre_covid$averageRating),]
+#genre_data_pre_covid <- genre_data_pre_covid[!is.na(genre_data_pre_covid$averageRating),]
 
 # Creating 10-folds
 set.seed(123)
@@ -698,7 +702,7 @@ plot(yes_norm_coefficients, main = "Coefficients of Lasso", ylab = "Beta")
 top_tokens_not_norm <- rownames(not_norm_coefficients)[order(abs(not_norm_coefficients), decreasing = TRUE)[1:5]]
 top_tokens_norm <- rownames(yes_norm_coefficients)[order(abs(yes_norm_coefficients), decreasing = TRUE)[1:5]]
 sum(top_tokens_norm %in% top_tokens_not_norm)
-top_tokens_norm[which(top_tokens_norm %in% top_tokens_not_norm)]
+imdb_pre_covid <- top_tokens_norm[which(top_tokens_norm %in% top_tokens_not_norm)]
 # Based on IMDB data, the best rated genres pre-covid seem to be documentary, thriller, and war.
 ```
 
@@ -706,10 +710,9 @@ top_tokens_norm[which(top_tokens_norm %in% top_tokens_not_norm)]
 # IMDB BEST GENRES POST-COVID
 averageRating <- c("averageRating")
 wanted_cols <- c(averageRating, genres)
-wanted_cols <- wanted_cols[!wanted_cols %in% sci_fi]
-wanted_cols <- append(wanted_cols, "sci.fi")
+colnames(final_merge)[which(colnames(final_merge) =="sci.fi")] <- "sci-fi"
 genre_data_post_covid <- final_merge[final_merge$covid == 1, wanted_cols]
-genre_data_post_covid <- genre_data_post_covid[!is.na(genre_data_post_covid$averageRating),]
+#genre_data_post_covid <- genre_data_post_covid[!is.na(genre_data_post_covid$averageRating),]
 
 # Creating 10-folds
 set.seed(123)
@@ -748,7 +751,7 @@ plot(yes_norm_coefficients, main = "Coefficients of Lasso", ylab = "Beta")
 top_tokens_not_norm <- rownames(not_norm_coefficients)[order(abs(not_norm_coefficients), decreasing = TRUE)[1:5]]
 top_tokens_norm <- rownames(yes_norm_coefficients)[order(abs(yes_norm_coefficients), decreasing = TRUE)[1:5]]
 sum(top_tokens_norm %in% top_tokens_not_norm)
-top_tokens_norm[which(top_tokens_norm %in% top_tokens_not_norm)]
+imdb_post_covid <- top_tokens_norm[which(top_tokens_norm %in% top_tokens_not_norm)]
 # Based on IMDB data, the best rated genres post-covid seem to be documentary, horror, and western.
 ```
 
@@ -798,5 +801,37 @@ top_tokens_norm <- rownames(yes_norm_coefficients)[order(abs(yes_norm_coefficien
 sum(top_tokens_norm %in% top_tokens_not_norm)
 top_tokens_norm[which(top_tokens_norm %in% top_tokens_not_norm)] 
 ```
+
+```{r}
+
+ols <- glm(covid ~ averageRating + critics_pick, family = "binomial", data=final_merge)
+summary(ols)
+
+library(formattable)
+results <- data.frame(imdb_pre_covid, nyt_pre_covid, imdb_post_covid, nyt_post_covid)
+
+results <- data.frame(imdb = c(imdb_pre_covid, imdb_post_covid), 
+                              nyt = c(nyt_pre_covid, nyt_post_covid))
+sort2.df <- with(results, results[order(imdb_pre_covid, imdb_post_covid, nyt_pre_covid) , ])
+sort2.df$nyt_post_covid <- sort2.df$nyt_post_covid[c(1,3,4,2)]
+
+
+formattable(sort2.df, caption = "Top Results for Lasso Models of Reviews for IMDB and NYT Against Before/After COVID-19 Pandemic", align= c("l", "l", "l", "l"), 
+            #area(col = 1:4) ~ function(x) !unique(x), 
+            #area(col = 1:4) ~ color_tile("#B1CBEB", "#3E7DCC")
+            #list(area(col = c("nyt_pre_covid", "nyt_post_covid", "imdb_post_covid", "imdb_pre_covid"))
+            #   ~ color_tile("white", "pink"))
+            list("span", nyt_pre_covid	 = color_tile("#f492f0", "#f492f0"),
+            imdb_post_covid	 = color_tile("#f492f0", "#f492f0"), 
+            imdb_pre_covid = color_tile("#f492f0", "#f492f0"),
+            nyt_post_covid = color_tile("#f492f0", "#f492f0"))
+            )
+
+
+
+```
+
+
+
 
 
